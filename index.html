@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QuickLead – AI sales marketplace</title>
+<style>
+:root{--bg:#f7f7f5;--cd:#fff;--tx:#1c1c1a;--mu:#6b6b66;--bd:#e4e3de;--ac:#0f766e;--ax:#fff;--hot:#dc2626;--warm:#d97706;--cold:#64748b;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#161615;--cd:#201f1e;--tx:#ecebe7;--mu:#9a9992;--bd:#33322f;--ac:#2dd4bf;--ax:#0b2e2a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#161615;--cd:#201f1e;--tx:#ecebe7;--mu:#9a9992;--bd:#33322f;--ac:#2dd4bf;--ax:#0b2e2a;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--bd);background:var(--cd)}
+header b{font-size:18px;color:var(--ac);margin-right:auto}
+main{max-width:980px;margin:0 auto;padding:16px}
+input,select,textarea,button{font:inherit;color:var(--tx);background:var(--cd);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;max-width:100%}
+button{cursor:pointer}button.p{background:var(--ac);color:var(--ax);border-color:var(--ac);font-weight:600}
+.cd{background:var(--cd);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
+.g{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+.r{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.mu{color:var(--mu);font-size:13px}
+.bd{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:700;color:#fff}
+.Hot{background:var(--hot)}.Warm{background:var(--warm)}.Cold{background:var(--cold)}
+.f{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}.f .w{grid-column:1/-1}
+.bar{height:8px;border-radius:4px;background:var(--ac);min-width:4px}
+.st{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px}.st div{background:var(--cd);border:1px solid var(--bd);border-radius:12px;padding:10px}.st b{font-size:22px;display:block}
+a{color:var(--ac)}h2,h3{margin:.3em 0}
+.tabs button.on{background:var(--ac);color:var(--ax)}
+.al{border-left:4px solid var(--warm)}
+.btn{display:inline-block;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--cd);cursor:pointer}
+</style></head><body>
+<header><b>⚡ QuickLead</b>
+<span class="tabs r"><button id="t-market" onclick="go('market')">Marketplace</button><button id="t-me" onclick="go('me')">My inquiries</button><button id="t-seller" onclick="go('seller')">Seller</button></span>
+<label class="mu">Your city <input id="bc" size="10" placeholder="e.g. Pune" onchange="setCity(this.value)"></label></header>
+<main id="app"></main>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* 1) Paste your Firebase web-app config here (Firebase console > Project settings > Your apps). It is public by design. */
+const FB_CONFIG={ apiKey: "AIzaSyC_gFeufplY91xhVLURsAblWA8UbMFb4ro",
+    authDomain: "quickestlead.firebaseapp.com",
+    projectId: "quickestlead",
+    storageBucket: "quickestlead.firebasestorage.app",
+    messagingSenderId: "444939572373",
+    appId: "1:444939572373:web:ad0e6a5376fae7f82bb79c"
+};
+const $=s=>document.querySelector(s),e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let mem={};const ls={get:k=>{try{return localStorage.getItem(k)}catch{return mem[k]??null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch{mem[k]=v}}};
+const H=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))].map(b=>b.toString(16).padStart(2,'0')).join('');
+const uid=()=>Math.random().toString(36).slice(2,9);
+/* ---------- Firebase data layer: Firestore snapshots fill DB; save() writes only what changed ---------- */
+firebase.initializeApp(FB_CONFIG);const FA=firebase.auth(),fs=firebase.firestore();
+const COLS={listings:'listings',views:'views',inq:'inquiries',msgs:'messages'};
+let DB={listings:[],views:[],inq:[],msgs:[]},KNOWN={},SRC={},UN=[],VID='',pend=0,VC={};
+try{VC=JSON.parse(ls.get('qlvc'))||{}}catch{}
+function rebuild(c){const m=new Map();for(const k in SRC)if(k.startsWith(c+':'))SRC[k].forEach((d,id)=>m.set(id,d));DB[c]=[...m.values()];
+ for(const k in KNOWN)if(k.startsWith(c+'/')&&!m.has(k.slice(c.length+1)))delete KNOWN[k];
+ m.forEach((d,id)=>KNOWN[c+'/'+id]=JSON.stringify(d))}
+function save(){const cur={};for(const c in COLS){cur[c]=new Set();DB[c].forEach(d=>{const k=c+'/'+d.id,j=JSON.stringify(d);cur[c].add(d.id);
+  if(KNOWN[k]!==j){KNOWN[k]=j;fs.collection(COLS[c]).doc(d.id).set(JSON.parse(j)).catch(er=>console.warn(c,er.code))}})}
+ for(const k in KNOWN){const c=k.split('/')[0],id=k.slice(c.length+1);if(!cur[c].has(id)){delete KNOWN[k];fs.collection(COLS[c]).doc(id).delete().catch(()=>{})}}}
+function listen(u){UN.forEach(f=>f());UN=[];SRC={};DB={listings:[],views:[],inq:[],msgs:[]};KNOWN={};
+ const sub=(c,n,q)=>UN.push(q.onSnapshot(x=>{SRC[c+':'+n]=new Map(x.docs.map(d=>[d.id,{...d.data(),id:d.id}]));rebuild(c);sched()},er=>console.warn(n,er.code,er.message)));
+ const C=n=>fs.collection(n);
+ sub('listings','a',C('listings'));
+ sub('inq','b',C('inquiries').where('vid','==',u.uid));sub('msgs','b',C('messages').where('vid','==',u.uid));
+ if(isSeller(u)){sub('inq','s',C('inquiries').where('so','==',u.uid));sub('msgs','s',C('messages').where('so','==',u.uid));sub('views','s',C('views').where('so','==',u.uid))}}
+function sched(){const a=document.activeElement;if(a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)){pend=1;return}render()}
+addEventListener('focusout',()=>{if(pend){pend=0;setTimeout(render,80)}});
+let CITY=ls.get('qlc')||'';$('#bc').value=CITY;
+const S={tab:'market',lid:null,q:'',type:'',user:null,add:false,op:new Set(),near:0,rad:25};let BU=ls.get('qlb')||'';let GPS=null;try{GPS=JSON.parse(ls.get('qlg'))}catch{}
+function setCity(v){CITY=v.trim();ls.set('qlc',CITY)}
+function seedDemo(){[['product','Samsung Galaxy smartphone 128GB','Electronics',18000,'Pune','Brand new mobile phone, 1 year warranty, bulk orders welcome'],['product','Cotton T-shirts wholesale','Clothing',180,'Badlapur','Plain and printed shirts, min order 50 pieces, factory direct'],['service','Website design for small business','IT services',15000,'Mumbai','Responsive website, hosting setup, delivered in 7 days'],['service','AC repair and servicing at home','Home services',800,'Pune','Same day technician visit for air conditioner repair and gas filling']].forEach(([type,title,cat,price,city,desc])=>{const c=XY[city.toLowerCase()];DB.listings.push({id:uid(),o:S.user,type,title,cat,price,city,desc,rad:30,lat:c[0],lng:c[1]})});save();render()}
+/* ---------- tiny on-device "AI": TF-IDF + synonyms + fuzzy + intent scoring (no API, no model download) ---------- */
+const SYN={phone:'mobile smartphone cellphone',mobile:'phone smartphone',laptop:'notebook computer',shirt:'tshirt tshirts clothing garment',clothes:'clothing shirt garment',website:'web site developer design',repair:'fix service technician',ac:'air conditioner cooling',cheap:'budget affordable',bulk:'wholesale',wholesale:'bulk'};
+const tk=t=>(String(t).toLowerCase().match(/[a-z0-9]+/g)||[]);
+const lev1=(a,b)=>{if(Math.abs(a.length-b.length)>1||a.length<5)return false;let i=0;while(i<a.length&&a[i]==b[i])i++;return a.slice(i+1)==b.slice(i+1)||a.slice(i+1)==b.slice(i)||a.slice(i)==b.slice(i+1)};
+function sim(q,d){if(q==d)return 1;if(SYN[q]?.split(' ').includes(d))return .8;if(d.startsWith(q)&&q.length>2)return .6;if(lev1(q,d))return .5;return 0}
+function search(q,type){
+ let b=null,c='';q=q.toLowerCase();
+ q=q.replace(/(?:under|below|within|<)\s*(\d+)/,(m,n)=>(b=+n,''));
+ q=q.replace(/\bin\s+([a-z]+)/,(m,x)=>(c=x,''));
+ const qt=tk(q).filter(t=>!['for','the','a','need','want','buy','looking','near'].includes(t)),L=DB.listings.filter(l=>!type||l.type==type);
+ const docs=L.map(l=>tk(l.title+' '+l.title+' '+l.cat+' '+l.desc));
+ const df={};docs.forEach(d=>new Set(d).forEach(w=>df[w]=(df[w]||0)+1));
+ return L.map((l,i)=>{let s=0,why=[];qt.forEach(t=>{let best=0,bw='';docs[i].forEach(w=>{const v=sim(t,w);if(v>best){best=v;bw=w}});if(best){s+=best*(1+Math.log((L.length+1)/(df[bw]||1)));why.push(bw)}});
+  if(c&&l.city.toLowerCase().startsWith(c)){s+=2;why.push(l.city)}
+  if(b&&l.price<=b){s+=1.5;why.push('≤ ₹'+b)}else if(b)s-=2;
+  if(!qt.length&&!c&&!b)s=1;return{l,s,why:[...new Set(why)]}}).filter(x=>x.s>0.4).sort((a,b)=>b.s-a.s)}
+function score(i){let s=20,w=['Base 20'];const add=(n,t)=>{s+=n;w.push('+'+n+' '+t)};
+ if(/^\d{10}$/.test(i.phone.replace(/\D/g,'').slice(-10)))add(25,'valid phone');
+ if(+i.qty>=10)add(15,'bulk quantity');if(i.gps)add(8,'shared location');
+ if(/today|urgent|asap|week|immediate/i.test(i.when+' '+i.msg))add(15,'urgent timeline');
+ if(+i.budget>0)add(10,'budget given');
+ if(/buy|order|quote|quotation|price|bulk|need|required|deliver/i.test(i.msg))add(10,'buying words');
+ const n=(VC[i.l]||0);if(n>1)add(10,'viewed '+n+'×');
+ const l=DB.listings.find(x=>x.id==i.l);if(l&&i.city&&l.city.toLowerCase()==i.city.toLowerCase())add(5,'same city');
+ s=Math.min(100,s);return{s,lab:s>=70?'Hot':s>=45?'Warm':'Cold',w:w.join(', ')}}
+/* ---------- views ---------- */
+function go(t){S.tab=t;S.lid=null;render()}
+function open_(id){S.tab='market';S.lid=id;VC[id]=(VC[id]||0)+1;ls.set('qlvc',JSON.stringify(VC));DB.views.push({id:uid(),l:id,so:(DB.listings.find(x=>x.id==id)||{}).o,v:VID,c:CITY||'Unknown',t:Date.now(),g:GPS});save();render();scrollTo(0,0)}
+const inr=n=>'₹'+Number(n).toLocaleString('en-IN');
+function render(){
+ $('#t-market').className=S.tab=='market'&&'on';$('#t-seller').className=S.tab=='seller'&&'on';$('#t-me').className=S.tab=='me'&&'on';
+ $('#app').innerHTML=S.tab=='seller'?(S.user?dash():login()):S.tab=='me'?me():S.lid?detail():market()}
+function market(){
+ let R=search(S.q,S.type);if(S.near&&GPS){R.forEach(x=>x.d=dist(x.l));R=R.filter(x=>x.d==null||x.d<=S.rad).sort((a,b)=>(a.d??1e9)-(b.d??1e9))}
+ return `<div class="cd r"><input id="q" style="flex:1;min-width:180px" value="${e(S.q)}" placeholder="Try: phone under 20000 in pune, ac repair, wholesale shirts" onkeydown="if(event.key=='Enter')doS()">
+ <select id="ty"><option value="">All</option><option value="product"${S.type=='product'?' selected':''}>Products</option><option value="service"${S.type=='service'?' selected':''}>Services</option></select><button class="p" onclick="doS()">AI search</button><button onclick="${GPS&&S.near?'clearGps()':'useGps()'}">${GPS&&S.near?'📍 Nearby on · turn off':'📍 Nearby me'}</button>${GPS&&S.near?`<select onchange="S.rad=+this.value;render()">${[5,10,25,50,100].map(k=>`<option value="${k}"${k==S.rad?' selected':''}>within ${k} km</option>`).join('')}</select>`:''}</div>
+ ${S.near&&GPS?'<p class="mu">📍 Showing the closest sellers first. Your location stays on this device and is shared with a seller only if you tick the box when sending an inquiry.</p>':''}<div class="g">${R.map(({l,why})=>`<div class="cd">${l.th?`<img src="${e(l.th)}" alt="" loading="lazy" style="width:100%;height:150px;object-fit:cover;border-radius:8px;margin-bottom:8px">`:''}<span class="mu">${e(l.type)} · ${e(l.cat)}</span><h3>${e(l.title)}</h3><div><b>${inr(l.price)}</b> <span class="mu">· ${e(l.city)}${dist(l)!=null?' · '+dist(l).toFixed(1)+' km away':''}</span> ${dl(l)}</div><p class="mu">${e(l.desc)}</p>
+ ${S.q&&why.length?`<div class="mu">Matched: ${e(why.join(', '))}</div>`:''}<button class="p" onclick="open_('${l.id}')">View &amp; request quote</button></div>`).join('')||'<p class="mu">No listings matched. Try fewer words.</p>'}</div>`}
+function doS(){S.q=$('#q').value;S.type=$('#ty').value;render()}
+function detail(){const l=DB.listings.find(x=>x.id==S.lid),p=l.type=='product';
+ return `<button onclick="S.lid=null;render()">← Back</button><div class="cd" style="margin-top:10px"><span class="mu">${e(l.type)} · ${e(l.cat)} · ${e(l.city)}</span><h2>${e(l.title)}</h2><div id="gal">${gal(l)}</div><b>${inr(l.price)}</b> ${dl(l)}<p>${e(l.desc)}</p></div>
+ <div class="cd"><h3>Request for quotation</h3><p class="mu">No login needed. We recognise this device, so you can chat with the seller under “My inquiries”. Signing up is optional.</p><div class="f">
+ <input id="n" placeholder="Your name"><input id="ph" placeholder="Phone / WhatsApp" inputmode="tel"><input id="em" placeholder="Email (optional)"><input id="ct" placeholder="Your city" value="${e(CITY)}">
+ <input id="qt" type="number" placeholder="${p?'Quantity needed':'Team size / number of units'}"><input id="bg" type="number" placeholder="Budget in ₹ (optional)">
+ <select id="wh"><option>Today</option><option>This week</option><option selected>This month</option><option>Just exploring</option></select>
+ <input id="x" placeholder="${p?'Delivery pincode':'Preferred start date'}">
+ <div class="w r"><button type="button" onclick="locate(g=>{GPS=g;ls.set('qlg',JSON.stringify(g));$('#sg').checked=true;$('#gs').textContent='Location captured ✓'})">📍 ${GPS?'Update':'Use'} my location</button><label class="mu"><input type="checkbox" id="sg" ${GPS?'checked':''}> Share it with the seller for delivery (optional)</label><span id="gs" class="mu"></span></div><textarea id="m" class="w" rows="3" placeholder="${p?'Colour, model, packing, payment terms…':'Describe the scope of work…'}"></textarea></div>
+ <p><button class="p" onclick="sendInq('${l.id}')">Send quotation request</button></p><div id="ok"></div></div>`}
+function sendInq(l){const g=i=>$(i).value.trim(),i={id:uid(),l,name:g('#n'),phone:g('#ph'),email:g('#em'),city:g('#ct'),qty:g('#qt'),budget:g('#bg'),when:g('#wh'),extra:g('#x'),msg:g('#m'),t:Date.now(),status:'New',note:'',vid:VID,so:(DB.listings.find(x=>x.id==l)||{}).o,gps:$('#sg')?.checked&&GPS?GPS:null};
+ if(!i.name||!i.phone){$('#ok').innerHTML='<span style="color:var(--hot)">Please add your name and phone.</span>';return}
+ const sc=score(i);i.score=sc.s;i.lab=sc.lab;i.why=sc.w;DB.inq.push(i);save();
+ $('#ok').innerHTML='<b style="color:var(--ac)">✓ Sent. The seller will reach out soon.</b> <button class="p" onclick="go(\'me\')">Chat with the seller →</button><div class="mu">This device is remembered, so you can return to your chat anytime.</div>'}
+function login(){return `<div class="cd" style="max-width:380px;margin:auto"><h2>Seller access</h2><p class="mu">Create a seller account with a username and password (6+ characters), or log in.</p>
+ <div class="f"><input id="lu" placeholder="Username" class="w"><input id="lp" type="password" placeholder="Password" class="w"></div>
+ <p class="r"><button class="p" onclick="sAuth(0)">Log in</button><button onclick="sAuth(1)">Create account</button></p><div id="ok" style="color:var(--hot)"></div></div>`}
+async function sAuth(reg){const u=$('#lu').value.trim().toLowerCase(),p=$('#lp').value;
+ if(!/^[a-z0-9._-]{3,}$/.test(u)||p.length<6){$('#ok').textContent='Username: 3+ letters or numbers. Password: 6+ characters.';return}
+ try{if(reg){const c=await FA.createUserWithEmailAndPassword(mail(u,SE),p);await c.user.updateProfile({displayName:u});S.uname=u;render()}else await FA.signInWithEmailAndPassword(mail(u,SE),p)}
+ catch(er){$('#ok').textContent=er.code=='auth/email-already-in-use'?'Username taken.':er.code=='auth/operation-not-allowed'?'Enable Email/Password sign-in in Firebase.':'Wrong username or password.'}}
+function dash(){const u=S.user,L=DB.listings.filter(l=>l.o==u),ids=L.map(l=>l.id),V=DB.views.filter(v=>ids.includes(v.l)),I=DB.inq.filter(i=>ids.includes(i.l)).sort((a,b)=>b.score-a.score),
+ unans=I.filter(i=>i.status=='New'),vis=new Set(V.map(v=>v.v)).size;
+ const geo={};V.forEach(v=>geo[v.c]=(geo[v.c]||0)+1);const ge=Object.entries(geo).sort((a,b)=>b[1]-a[1]).slice(0,6),mx=ge[0]?.[1]||1;
+ const pl=[];L.forEach(l=>{const m={};DB.views.filter(v=>v.l==l.id).forEach(v=>(m[v.v]=m[v.v]||[]).push(v));
+  Object.values(m).forEach(a=>{if(a.length>=2&&!DB.inq.some(i=>i.l==l.id&&i.vid==a[0].v))pl.push({l,n:a.length,c:a[0].c})})});
+ return `<div class="r" style="justify-content:space-between"><h2>Dashboard · ${e(S.uname||'seller')}</h2><span class="r"><button onclick="S.add=!S.add;render()">+ New listing</button><button onclick="out()">Log out</button></span></div>
+ <div class="st"><div><b>${V.length}</b>views</div><div><b>${vis}</b>unique visitors</div><div><b>${I.length}</b>inquiries</div><div><b>${DB.msgs.filter(m=>m.from=='buyer'&&!m.r&&I.some(i=>i.id==m.inq)).length}</b>new messages</div><div><b style="color:${unans.length?'var(--warm)':'inherit'}">${unans.length}</b>awaiting reply</div></div>
+ ${S.add?addForm():''}
+ <div class="cd"><h3>Where visitors come from</h3><div class="mu">📍 ${V.filter(v=>{const l=L.find(x=>x.id==v.l);return v.g&&l&&l.lat!=null&&km(v.g.lat,v.g.lng,l.lat,l.lng)<=10}).length} GPS visits within 10 km of your listings</div>${ge.map(([c,n])=>`<div class="r"><span style="width:90px">${e(c)}</span><div class="bar" style="width:${n/mx*55}%"></div><span class="mu">${n}</span></div>`).join('')||'<span class="mu">No visits yet.</span>'}</div>
+ <div class="cd"><h3>🔎 AI possible leads</h3><p class="mu">Visitors who came back to a listing but have not inquired yet.</p>${pl.map(x=>`<div class="r"><span class="bd Warm">Possible</span><span><b>${e(x.l.title)}</b> · ${x.n} visits from ${e(x.c)}</span></div>`).join('')||'<span class="mu">None right now.</span>'}</div>
+ <h3>Inquiry tracker</h3>${I.map(i=>{const l=L.find(x=>x.id==i.l),ph=i.phone.replace(/\D/g,'');
+  return `<div class="cd ${i.status=='New'?'al':''}"><div class="r"><span class="bd ${i.lab}">${i.lab} ${i.score}</span><b>${e(i.name)}</b><span class="mu">${e(i.city||'—')} · ${new Date(i.t).toLocaleString()}</span></div>
+  <div class="mu">${e(l.title)}${i.gps?` · 📍 ${l.lat!=null?km(i.gps.lat,i.gps.lng,l.lat,l.lng).toFixed(1)+' km · ':''}<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${i.gps.lat},${i.gps.lng}">Open in Maps</a>`:''} · Qty ${e(i.qty||'—')} · Budget ${i.budget?inr(i.budget):'—'} · ${e(i.when)} · ${e(i.extra||'')}</div><p>${e(i.msg||'(no message)')}</p><div class="mu">AI score: ${e(i.why)}</div>
+  <div class="r" style="margin-top:8px"><a href="tel:${e(ph)}">📞 Call</a><a target="_blank" rel="noopener" href="https://wa.me/${e(ph.length==10?'91'+ph:ph)}?text=${encodeURIComponent('Hi '+i.name+', thanks for your inquiry on '+l.title+'. Here is our quote: ')}">💬 Quick reply</a>
+  <select onchange="upd('${i.id}','status',this.value)">${['New','Contacted','Quoted','Won','Lost'].map(s=>`<option${s==i.status?' selected':''}>${s}</option>`).join('')}</select>
+  <input style="flex:1;min-width:160px" placeholder="What does the buyer want? Notes…" value="${e(i.note)}" onchange="upd('${i.id}','note',this.value)"></div>${chat(i)}</div>`}).join('')||'<p class="mu">No inquiries yet. Open a listing in Marketplace and send a quote request to test.</p>'}
+ <h3>My listings</h3>${L.length?'':'<button class="p" onclick="seedDemo()">Add 4 demo listings</button>'}${L.map(l=>`<div class="cd r">${l.th?`<img src="${e(l.th)}" alt="" style="width:48px;height:48px;object-fit:cover;border-radius:8px">`:''}<b>${e(l.title)}</b><span class="mu">${DB.views.filter(v=>v.l==l.id).length} views · ${DB.inq.filter(i=>i.l==l.id).length} inquiries</span><label class="btn" style="margin-left:auto">📷 Add photos<input type="file" accept="image/*" multiple hidden onchange="addPhotos('${l.id}',this)"></label><button onclick="del('${l.id}')">Delete</button></div>`).join('')}`}
+function addForm(){return `<div class="cd"><h3>New listing</h3><div class="f"><input id="a1" placeholder="Title"><select id="a2"><option value="product">Product</option><option value="service">Service</option></select><input id="a3" placeholder="Category"><input id="a4" type="number" placeholder="Price ₹"><input id="a5" placeholder="City / area"><input id="a7" type="number" placeholder="Delivery radius in km (optional)"><div class="r"><button type="button" onclick="locate(g=>{LG=g;$('#lg').textContent='📍 Shop location set ✓'})">📍 Use shop location</button><span id="lg" class="mu"></span></div><textarea id="a6" class="w" rows="2" placeholder="Description (more keywords = better AI matching)"></textarea>
+<div class="w"><div class="mu">Photos (up to 4)</div><div class="r"><label class="btn">📁 Gallery<input type="file" accept="image/*" multiple hidden onchange="pickImgs(this)"></label><label class="btn">📷 Camera<input type="file" accept="image/*" capture="environment" hidden onchange="pickImgs(this)"></label><input id="a9" placeholder="or paste image link (https://…)" style="flex:1;min-width:160px"><button type="button" onclick="addUrl()">Add link</button></div>
+<div id="th" class="r" style="margin-top:6px"></div><div class="mu">Photos are shrunk on your device before saving. A link can point to any image online, for example one in your GitHub repo.</div></div></div><p><button class="p" onclick="addL()">Publish listing</button></p></div>`}
+/* ---------- listing photos: thumbnail lives on the listing; full photos in a separate doc, loaded only on the detail page ---------- */
+let IMGS=[];const IMGC={};
+const compress=(file,mx=800,q=.7)=>new Promise(r=>{const fr=new FileReader();fr.onload=()=>{const im=new Image();im.onload=()=>{const k=Math.min(1,mx/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;c.getContext('2d').drawImage(im,0,0,c.width,c.height);r(c.toDataURL('image/jpeg',q))};im.onerror=()=>r('');im.src=fr.result};fr.onerror=()=>r('');fr.readAsDataURL(file)});
+const thumb=src=>new Promise(r=>{if(!src.startsWith('data:'))return r(src);const im=new Image();im.onload=()=>{const k=Math.min(1,360/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;c.getContext('2d').drawImage(im,0,0,c.width,c.height);r(c.toDataURL('image/jpeg',.6))};im.onerror=()=>r('');im.src=src});
+function thumbs(){const t=$('#th');if(t)t.innerHTML=IMGS.map((s,i)=>`<span style="position:relative;display:inline-block"><img src="${e(s)}" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:8px"><button type="button" onclick="IMGS.splice(${i},1);thumbs()" style="position:absolute;top:-6px;right:-6px;padding:0 6px;border-radius:99px">\u00d7</button></span>`).join('')}
+async function pickImgs(f){const fl=[...f.files];f.value='';const add=(await Promise.all(fl.slice(0,4-IMGS.length).map(x=>compress(x)))).filter(Boolean);IMGS=IMGS.concat(add).slice(0,4);thumbs()}
+function addUrl(){const v=$('#a9').value.trim();if(!/^https:\/\//i.test(v)||IMGS.length>=4)return;IMGS.push(v);$('#a9').value='';thumbs()}
+function gal(l){if(!l.n)return '';const a=IMGC[l.id];
+ if(a)return `<div class="r" style="overflow-x:auto;flex-wrap:nowrap">${a.map(s=>`<img src="${e(s)}" alt="" style="height:220px;border-radius:10px;flex:none;max-width:90%;object-fit:cover">`).join('')}</div>`;
+ if(!IMGC['_'+l.id]){IMGC['_'+l.id]=1;fs.collection('listingImages').doc(l.id).get().then(d=>{IMGC[l.id]=d.exists?d.data().imgs:(l.th?[l.th]:[]);const g=$('#gal');if(g&&S.lid==l.id)g.innerHTML=gal(l)}).catch(()=>{})}
+ return l.th?`<img src="${e(l.th)}" alt="" style="height:220px;border-radius:10px;object-fit:cover">`:''}
+async function addPhotos(id,f){const l=DB.listings.find(x=>x.id==id),fl=[...f.files];f.value='';if(!l)return;let old=[];
+ try{const d=await fs.collection('listingImages').doc(id).get();if(d.exists)old=d.data().imgs||[]}catch{}
+ const add=(await Promise.all(fl.slice(0,Math.max(0,4-old.length)).map(x=>compress(x)))).filter(Boolean),all=old.concat(add).slice(0,4);
+ if(!all.length||all.reduce((a,x)=>a+x.length,0)>850000){alert('Nothing added: a listing holds up to 4 photos and about 600 KB in total.');return}
+ await fs.collection('listingImages').doc(id).set({o:S.user,imgs:all});IMGC[id]=all;l.th=await thumb(all[0]);l.n=all.length;save();render()}
+async function addL(){const g=i=>$(i).value.trim();if(!g('#a1'))return;
+ if(IMGS.reduce((a,x)=>a+x.length,0)>850000){alert('Photos are too large together. Remove one or use image links.');return}
+ const id=uid(),c=XY[g('#a5').toLowerCase()],th=IMGS[0]?await thumb(IMGS[0]):'';
+ if(IMGS.length)await fs.collection('listingImages').doc(id).set({o:S.user,imgs:IMGS}).catch(er=>alert('Could not save photos: '+er.code));
+ DB.listings.push({id,o:S.user,type:g('#a2'),title:g('#a1'),cat:g('#a3')||'General',price:+g('#a4')||0,city:g('#a5')||'—',desc:g('#a6'),rad:+g('#a7')||0,lat:LG?.lat??c?.[0]??null,lng:LG?.lng??c?.[1]??null,th,n:IMGS.length});
+ IMGS=[];LG=null;save();S.add=false;render()}
+function upd(id,k,v){DB.inq.find(i=>i.id==id)[k]=v;save();if(k=='status')render()}
+function del(id){DB.listings=DB.listings.filter(l=>l.id!=id);fs.collection('listingImages').doc(id).delete().catch(()=>{});save();render()}
+/* ---------- buyer–seller messaging (device-recognised, optional buyer account) ---------- */
+const thread=id=>DB.msgs.filter(m=>m.inq==id).sort((a,b)=>a.t-b.t);
+const mineSet=()=>new Set([VID]);
+function bubbles(i,me){let ch=0;const T=thread(i.id);T.forEach(m=>{if(m.from!=me&&!m.r){m.r=1;ch=1}});if(ch)save();
+ return '<div style="display:grid;gap:6px;margin:8px 0;max-height:260px;overflow:auto">'+[{from:'buyer',text:i.msg||'(quotation request sent)',t:i.t}].concat(T).map(m=>{const s=m.from==me;return `<div style="justify-self:${s?'end':'start'};max-width:80%;background:${s?'var(--ac)':'var(--bd)'};color:${s?'var(--ax)':'var(--tx)'};padding:6px 10px;border-radius:12px">${e(m.text)}<div style="font-size:11px;opacity:.7">${m.from=='buyer'?'Buyer':'Seller'} · ${new Date(m.t).toLocaleString()}</div></div>`}).join('')+'</div>'}
+function say(id,from){const el=$('#m'+id),t=el.value.trim();if(!t)return;const q=DB.inq.find(x=>x.id==id);DB.msgs.push({id:uid(),inq:id,from,text:t,t:Date.now(),r:0,vid:q.vid,so:q.so});
+ if(from=='seller'){const i=DB.inq.find(x=>x.id==id);if(i.status=='New')i.status='Contacted';S.op.add(id)}save();render()}
+function chat(i){const un=DB.msgs.filter(m=>m.inq==i.id&&m.from=='buyer'&&!m.r).length;
+ return `<details ${un||S.op.has(i.id)?'open':''} style="margin-top:8px" ontoggle="this.open?S.op.add('${i.id}'):S.op.delete('${i.id}')"><summary><b>💬 Chat</b> ${un?`<span class="bd Hot">${un} new</span>`:''} <span class="mu">${thread(i.id).length} messages</span></summary>${bubbles(i,'seller')}<div class="r"><input id="m${i.id}" style="flex:1" placeholder="Reply to ${e(i.name)}…" onkeydown="if(event.key=='Enter')say('${i.id}','seller')"><button class="p" onclick="say('${i.id}','seller')">Send</button></div></details>`}
+function me(){const I=DB.inq.filter(i=>mineSet().has(i.vid)).sort((a,b)=>b.t-a.t);
+ const acct=BU?`<div class="r"><span>Signed in as <b>${e(BU)}</b>. Your inquiries and chats follow you to any device.</span><button onclick="out()">Log out</button></div>`:
+ `<p>You don’t need an account. This device is recognised automatically, so your inquiries and chats are kept here. <b>Optional:</b> sign up or log in to see them from any device.</p><div class="r"><input id="bu" placeholder="Username"><input id="bp" type="password" placeholder="Password"><button class="p" onclick="bauth(1)">Sign up</button><button onclick="bauth(0)">Log in</button></div><div id="bok" style="color:var(--hot)"></div>`;
+ return `<div class="cd"><h3>My inquiries</h3>${acct}</div>`+(I.map(i=>{const l=DB.listings.find(x=>x.id==i.l)||{title:'(removed listing)'},un=thread(i.id).filter(m=>m.from=='seller'&&!m.r).length;
+  return `<div class="cd"><div class="r"><b>${e(l.title)}</b><span class="mu">${e(i.status)} · ${new Date(i.t).toLocaleDateString()}</span>${un?`<span class="bd Hot">${un} new</span>`:''}</div>${bubbles(i,'buyer')}<div class="r"><input id="m${i.id}" style="flex:1" placeholder="Message the seller…" onkeydown="if(event.key=='Enter')say('${i.id}','buyer')"><button class="p" onclick="say('${i.id}','buyer')">Send</button></div></div>`}).join('')||'<p class="mu">No inquiries from this device yet. Open a listing and request a quote.</p>')}
+async function bauth(reg){const u=$('#bu').value.trim().toLowerCase(),p=$('#bp').value,m=$('#bok');
+ if(!/^[a-z0-9._-]{3,}$/.test(u)||p.length<6){m.textContent='Username: 3+ letters or numbers. Password: 6+ characters.';return}
+ try{const em=mail(u,BE),cu=FA.currentUser;
+  if(reg){if(cu&&cu.isAnonymous){await cu.linkWithCredential(firebase.auth.EmailAuthProvider.credential(em,p));await cu.updateProfile({displayName:u});BU=u;render()}else await FA.createUserWithEmailAndPassword(em,p)}
+  else await FA.signInWithEmailAndPassword(em,p)}
+ catch(er){m.textContent=er.code=='auth/email-already-in-use'?'Username taken.':'Wrong username or password.'}}
+/* ---------- GPS: nearby sellers + delivery (permission-based, no network lookups) ---------- */
+let LG=null;
+const XY={pune:[18.52,73.86],mumbai:[19.08,72.88],badlapur:[19.16,73.24],thane:[19.22,72.98],nashik:[20,73.79],delhi:[28.61,77.21],bengaluru:[12.97,77.59]};
+const km=(a,b,c,d)=>{const r=x=>x*Math.PI/180,h=Math.sin(r(c-a)/2)**2+Math.cos(r(a))*Math.cos(r(c))*Math.sin(r(d-b)/2)**2;return 12742*Math.asin(Math.sqrt(h))};
+const dist=l=>GPS&&l.lat!=null?km(GPS.lat,GPS.lng,l.lat,l.lng):null;
+const dl=l=>{const d=dist(l);return l.rad?(d==null?`<span class="mu">Delivers within ${l.rad} km</span>`:d<=l.rad?'<span class="bd" style="background:var(--ac);color:var(--ax)">Delivers to you</span>':'<span class="bd Cold">Outside delivery area</span>'):''};
+function locate(cb){if(!navigator.geolocation){alert('Location is not available on this device or browser.');return}
+ navigator.geolocation.getCurrentPosition(p=>cb({lat:+p.coords.latitude.toFixed(4),lng:+p.coords.longitude.toFixed(4)}),()=>alert('Location was blocked or denied. You can still search by city, or allow location in your browser settings.'),{timeout:10000,maximumAge:6e5})}
+function useGps(){locate(g=>{GPS=g;ls.set('qlg',JSON.stringify(g));if(!CITY){let b=null,n=1e9;DB.listings.forEach(l=>{const d=dist(l);if(d!=null&&d<n){n=d;b=l}});if(b&&n<40){CITY=b.city;ls.set('qlc',CITY);$('#bc').value=CITY}}S.near=1;render()})}
+function clearGps(){GPS=null;ls.set('qlg','');S.near=0;render()}
+const SE='@seller.quicklead.app',BE='@buyer.quicklead.app';
+const mail=(u,d)=>u.replace(/[^a-z0-9._-]/g,'')+d;
+const isSeller=u=>!!u&&!u.isAnonymous&&(u.email||'').endsWith(SE);
+const out=()=>FA.signOut();
+/* every visitor gets a silent anonymous Firebase identity = the "recognised device"; sign-up just links an account to it */
+FA.onAuthStateChanged(async u=>{
+ if(!u){try{await FA.signInAnonymously()}catch(er){$('#app').innerHTML='<div class="cd">Setup needed: paste your Firebase config and enable <b>Anonymous</b> sign-in in Firebase Authentication. ('+e(er.code)+')</div>'}return}
+ VID=u.uid;const sl=isSeller(u);S.user=sl?u.uid:null;S.uname=sl?(u.displayName||''):'';BU=(!u.isAnonymous&&!sl)?(u.displayName||''):'';S.lid=null;listen(u);render()});
+</script></body></html>
